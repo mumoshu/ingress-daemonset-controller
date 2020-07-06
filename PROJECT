@@ -1,0 +1,7 @@
+domain: mumoshu.github.io
+repo: github.com/mumoshu/ingress-daemonset-controller
+resources:
+- group: ingressdaemonsets
+  kind: IngressDaemonSet
+  version: v1alpha1
+version: "2"

@@ -1,0 +1,7 @@
+apiVersion: ingressdaemonsets.mumoshu.github.io/v1alpha1
+kind: IngressDaemonSet
+metadata:
+  name: ingressdaemonset-sample
+spec:
+  # Add fields here
+  foo: bar

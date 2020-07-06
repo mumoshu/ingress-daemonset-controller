@@ -1,0 +1,26 @@
+# permissions to do edit ingressdaemonsets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ingressdaemonset-editor-role
+rules:
+- apiGroups:
+  - ingressdaemonsets.mumoshu.github.io
+  resources:
+  - ingressdaemonsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ingressdaemonsets.mumoshu.github.io
+  resources:
+  - ingressdaemonsets/status
+  verbs:
+  - get
+  - patch
+  - update
