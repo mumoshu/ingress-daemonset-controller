@@ -54,10 +54,9 @@ Here's an example of `IngressDaemonSet`:
 
 ```
 kind: IngressDaemonSet
-apiVersion: ingress.mumoshu.github.io/v1alpha1
+apiVersion: ingressdaemonsets.mumoshu.github.io/v1alpha1
 metadata:
   name: nginx-ingress
-  namespace: ingress-nginx
   labels:
     app: ingress-nginx
     app.kubernetes.io/name: ingress-nginx
@@ -68,10 +67,11 @@ spec:
   podsPerNode: 2
 
   # NEW: The host/node port to be used for responding health-check http requests from the external load balancer
-  healthCheckNodePort: 10080
+  healthCheckNodePorts:
+  - 10080
 
   updateStrategy:
-    # Has different meaning than standard DaemonSet (See below)
+    # Has different meaning and options than standard DaemonSet (See below)
     type: RollingUpdate
     rollingUpdate:
       # If this is greater than or equal to 1, the controller communicates with node-detacher to detach the node
@@ -92,6 +92,12 @@ spec:
       # The controller runs rolling-updates of currently on and pods up to 3 nodes.
       # The default is 1. You can only set either of `maxUnavaiableNodes` or `maxDegradedNodes` to 1 or greater.
       maxDegradedNodes: 3
+
+      # The controller annotates the per-node deployment to start failing health-checks from the external lb
+      # even before any pod gets replaced. 
+      #annotateDeploymentToDetach:
+      #  key: "ingressdaemonsets.mumoshu.github.com/to-be-updated"
+      #  gracePeriodSeconds: 10
 
       # annotateNodeToDetach configures the controller to annotate the node before updating pods scheduled onto the node.
       # It can either be (1) annotation key or (2) annotation key=value.
@@ -226,4 +232,8 @@ You'll either:
 
 If you're using one of public clouds that has a solid L4 and/or L7 loadbalancers, it is recommended to use the second option so that you can reuse the external loadbalancer beyond cluster replacements.
 
-If you're using ingress daemonset to implement a load-balancer-as-a-service in an on-premise infrastructure, it can be correct to use the first due to various reasons, there's no easy way to continually attach set of K8s nodes to a LB without Kubernetes.
+If you're using ingress daemonset to implement a load-balancer-as-a-service in an on-premise infrastructure, it can be correct to use the first due to various reasons,
+like there's no easy way to continually attach set of K8s nodes to a LB without Kubernetes.
+
+You don't need to fine-tune `prestop` hooks for your containers anymore, as the controller annotates the per-node deployment to make the health-check failing and wait for a configurable grace period, even before any pod gets deleted and recreated.
+Please see `annotateDeploymentToDetach` in the above example for more information.

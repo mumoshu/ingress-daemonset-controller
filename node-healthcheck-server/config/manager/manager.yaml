@@ -6,7 +6,7 @@ metadata:
   name: system
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: DaemonSet
 metadata:
   name: controller-manager
   namespace: system
@@ -26,15 +26,21 @@ spec:
       - command:
         - /manager
         args:
-        - --enable-leader-election
-        image: mumoshu/ingress-daemonset-controller:latest
+        - --healthcheck-addr=:8081
+        - --deployment=exampledeploy-$(NODE_NAME)
+        image: mumoshu/ingress-daemonset-node-healthcheck-server:latest
         imagePullPolicy: Always
         name: manager
         resources:
           limits:
             cpu: 100m
-            memory: 30Mi
+            memory: 20Mi
           requests:
             cpu: 100m
             memory: 20Mi
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
       terminationGracePeriodSeconds: 10

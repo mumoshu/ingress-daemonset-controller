@@ -5782,6 +5782,28 @@ spec:
                   description: RollingUpdate contains various configuration options
                     for the RollingUpdate update strategy
                   properties:
+                    annotateDeploymentToDetach:
+                      description: AnnotateDeploymentToDetach configures the controller
+                        to annotate the per-node deployment before updating pods scheduled
+                        onto the node. It can either be (1) annotation key or (2)
+                        annotation key=value. When the first option is used, the controller
+                        annotate the node with the specified key, without an empty
+                        value.
+                      properties:
+                        gracePeriodSeconds:
+                          description: GracePeriodSeconds is the duration in seconds
+                            to wait before start rolling pods and after annotating
+                            the node. If WaitForDetachmentByAnnotatedTimestamp is
+                            also set, the controller waits for this grace period passes
+                            before waiting with the annotated timestamp.
+                          type: integer
+                        key:
+                          description: Key is the annotation key
+                          type: string
+                        value:
+                          description: Value is the annotation value
+                          type: string
+                      type: object
                     annotateNodeToDetach:
                       description: AnnotateNodeToDetach configures the controller
                         to annotate the node before updating pods scheduled onto the

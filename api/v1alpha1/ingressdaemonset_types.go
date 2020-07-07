@@ -77,10 +77,15 @@ type RollingUpdateSpec struct {
 	// MaxSurgedPodsPerNode is the maxSurge for the per-node deployment
 	MaxSurgedPodsPerNode *intstr.IntOrString `json:"maxSurgedPodsPerNode,omitempty"`
 
+	// AnnotateDeploymentToDetach configures the controller to annotate the per-node deployment before updating pods scheduled onto the node.
+	// It can either be (1) annotation key or (2) annotation key=value.
+	// When the first option is used, the controller annotate the node with the specified key, without an empty value.
+	AnnotateDeploymentToDetach *AnnotateToDetach `json:"annotateDeploymentToDetach,omitempty"`
+
 	// AnnotateNodeToDetach configures the controller to annotate the node before updating pods scheduled onto the node.
 	// It can either be (1) annotation key or (2) annotation key=value.
 	// When the first option is used, the controller annotate the node with the specified key, without an empty value.
-	AnnotateNodeToDetach *AnnotateNodeToDetach `json:"annotateNodeToDetach,omitempty"`
+	AnnotateNodeToDetach *AnnotateToDetach `json:"annotateNodeToDetach,omitempty"`
 
 	// WaitForDetachmentByAnnotatedTimestamp configures the controller to wait for the certain period since the detachment
 	// timestamp stored in the specified annotation.
@@ -89,7 +94,7 @@ type RollingUpdateSpec struct {
 	WaitForDetachmentByAnnotatedTimestamp *WaitForDetachmentByAnnotatedTimestamp `json:"waitForDetachmentByAnnotatedTimestamp,omitempty"`
 }
 
-type AnnotateNodeToDetach struct {
+type AnnotateToDetach struct {
 	// Key is the annotation key
 	Key string `json:"key,omitempty"`
 

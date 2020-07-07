@@ -22,6 +22,7 @@ import (
 	"hash/fnv"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"strconv"
@@ -39,6 +40,8 @@ import (
 )
 
 const (
+	ObjectHashAnnotationKey = "object-hash"
+
 	DeploymentIdentifierField     = "deploymentIdentifier"
 	DeploymentOwnerField          = "deploymentOwner"
 	DaemonSetOwnerField           = "daemonSetOwner"
@@ -123,14 +126,18 @@ func (r *IngressDaemonSetReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 
 	targetedNodeNames := map[string]bool{}
 
-	if len(ing.Spec.NodeSelector) > 0 {
-		if err := r.List(ctx, &nodeList, client.MatchingLabels(ing.Spec.NodeSelector)); err != nil {
-			return ctrl.Result{}, err
-		}
+	var opts []client.ListOption
 
-		for _, n := range nodeList.Items {
-			targetedNodeNames[n.Name] = true
-		}
+	if len(ing.Spec.NodeSelector) > 0 {
+		opts = append(opts, client.MatchingLabels(ing.Spec.NodeSelector))
+	}
+
+	if err := r.List(ctx, &nodeList, opts...); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	for _, n := range nodeList.Items {
+		targetedNodeNames[n.Name] = true
 	}
 
 	var ownedDeploysList appsv1.DeploymentList
@@ -225,9 +232,15 @@ func (r *IngressDaemonSetReconciler) reconcileDeployments(
 		var numUnavailableNodes int
 
 		for _, currentDeploy := range ownedDeploysList.Items {
-			var isUpToUpdate bool
-			if currentDeploy.Status.ObservedGeneration == currentDeploy.Generation && currentDeploy.Status.UpdatedReplicas < currentDeploy.Status.AvailableReplicas {
-				isUpToUpdate = true
+			var isUpToDate bool
+
+			desiredReplicas := *currentDeploy.Spec.Replicas
+
+			if currentDeploy.Status.ObservedGeneration == currentDeploy.Generation &&
+				currentDeploy.Status.UpdatedReplicas > desiredReplicas &&
+				currentDeploy.Status.AvailableReplicas >= desiredReplicas {
+
+				isUpToDate = true
 			}
 
 			nodeName := currentDeploy.Spec.Template.Spec.NodeName
@@ -256,33 +269,64 @@ func (r *IngressDaemonSetReconciler) reconcileDeployments(
 				}
 			}
 
-			desiredDeploy := newDeployment(ing, nodeName)
+			desiredDeploy := r.newDeployment(ing, nodeName)
 
-			oldHash := ComputeHash(currentDeploy.Spec)
-			newHash := ComputeHash(desiredDeploy.Spec)
+			oldHash := currentDeploy.Annotations[ObjectHashAnnotationKey]
+			newHash := desiredDeploy.Annotations[ObjectHashAnnotationKey]
 
 			if newHash != oldHash {
 				if !isUnavailable {
-					// If not annotated yet, annotate the node to detach and wait until the detachment timestamp is set
-					// and is older than the current time minus the grace period
-					detachmentAnnotationKey := getDetachNodeAnnotationKey(ing)
-
-					var detachmentAnnotationValue string
-					if v := getDetachNodeAnnotationValue(ing); v != nil {
-						detachmentAnnotationValue = *v
-					}
-
-					if as, updated := SetAnnotation(node.GetObjectMeta(), detachmentAnnotationKey, detachmentAnnotationValue); updated {
-						newNode := node.DeepCopy()
-						newNode.SetAnnotations(as)
-
-						if err := r.Update(ctx, newNode); err != nil {
-							log.Error(err, "Annotating node")
-
-							return &ctrl.Result{RequeueAfter: defaultRequeueAfterOnError}, err
+					// Annotate per-node deployment
+					{
+						// If not annotated yet, annotate the node to detach and wait until the detachment timestamp is set
+						// and is older than the current time minus the grace period
+						deployDetachmentAnnotationKey := "ingressdaemonsets.mumoshu.github.com/to-be-updated"
+						if ing.Spec.UpdateStrategy.RollingUpdate.AnnotateDeploymentToDetach != nil && ing.Spec.UpdateStrategy.RollingUpdate.AnnotateDeploymentToDetach.Key != "" {
+							deployDetachmentAnnotationKey = ing.Spec.UpdateStrategy.RollingUpdate.AnnotateDeploymentToDetach.Key
 						}
 
-						return &ctrl.Result{Requeue: true}, nil
+						var detachmentAnnotationValue string
+						if ing.Spec.UpdateStrategy.RollingUpdate.AnnotateDeploymentToDetach != nil {
+							detachmentAnnotationValue = *ing.Spec.UpdateStrategy.RollingUpdate.AnnotateDeploymentToDetach.Value
+						}
+
+						if as, updated := SetAnnotation(currentDeploy.GetObjectMeta(), deployDetachmentAnnotationKey, detachmentAnnotationValue); updated {
+							newDeploy := currentDeploy.DeepCopy()
+							newDeploy.SetAnnotations(as)
+
+							if err := r.Update(ctx, newDeploy); err != nil {
+								log.Error(err, "Annotating deployment")
+
+								return &ctrl.Result{RequeueAfter: defaultRequeueAfterOnError}, err
+							}
+
+							return &ctrl.Result{Requeue: true}, nil
+						}
+					}
+
+					// Annotate node
+					{
+						// If not annotated yet, annotate the node to detach and wait until the detachment timestamp is set
+						// and is older than the current time minus the grace period
+						nodeDetachmentAnnotationKey := getDetachNodeAnnotationKey(ing)
+
+						var detachmentAnnotationValue string
+						if v := getDetachNodeAnnotationValue(ing); v != nil {
+							detachmentAnnotationValue = *v
+						}
+
+						if as, updated := SetAnnotation(node.GetObjectMeta(), nodeDetachmentAnnotationKey, detachmentAnnotationValue); updated {
+							newNode := node.DeepCopy()
+							newNode.SetAnnotations(as)
+
+							if err := r.Update(ctx, newNode); err != nil {
+								log.Error(err, "Annotating node")
+
+								return &ctrl.Result{RequeueAfter: defaultRequeueAfterOnError}, err
+							}
+
+							return &ctrl.Result{Requeue: true}, nil
+						}
 					}
 				}
 
@@ -334,7 +378,7 @@ func (r *IngressDaemonSetReconciler) reconcileDeployments(
 				}
 
 				return &ctrl.Result{Requeue: true}, nil
-			} else if isUnavailable && isUpToUpdate {
+			} else if isUnavailable && isUpToDate {
 				// Remove the detachment annotation to attach the node again
 				detachKey := getDetachNodeAnnotationKey(ing)
 
@@ -393,10 +437,10 @@ func (r *IngressDaemonSetReconciler) reconcileDeployments(
 				}
 			}
 
-			desiredDeploy := newDeployment(ing, nodeName)
+			desiredDeploy := r.newDeployment(ing, nodeName)
 
-			oldHash := ComputeHash(currentDeploy.Spec)
-			newHash := ComputeHash(desiredDeploy.Spec)
+			oldHash := currentDeploy.Annotations[ObjectHashAnnotationKey]
+			newHash := desiredDeploy.Annotations[ObjectHashAnnotationKey]
 
 			if newHash != oldHash {
 				newDS := currentDeploy.DeepCopy()
@@ -416,7 +460,7 @@ func (r *IngressDaemonSetReconciler) reconcileDeployments(
 	}
 
 	for nodeName := range targetedNodeNames {
-		d := newDeployment(ing, nodeName)
+		d := r.newDeployment(ing, nodeName)
 
 		if err := r.Create(ctx, &d); err != nil {
 			log.Error(err, "Creating deployment")
@@ -429,15 +473,31 @@ func (r *IngressDaemonSetReconciler) reconcileDeployments(
 }
 
 func getDetachNodeTimestampAnnotationKey(ing ingressdaemonsetsv1alpha1.IngressDaemonSet) string {
-	return ing.Spec.UpdateStrategy.RollingUpdate.WaitForDetachmentByAnnotatedTimestamp.Key
+	v := ing.Spec.UpdateStrategy.RollingUpdate.WaitForDetachmentByAnnotatedTimestamp
+
+	if v != nil {
+		return v.Key
+	}
+
+	return ""
 }
 
 func getDetachNodeAnnotationKey(ing ingressdaemonsetsv1alpha1.IngressDaemonSet) string {
-	return ing.Spec.UpdateStrategy.RollingUpdate.AnnotateNodeToDetach.Key
+	v := ing.Spec.UpdateStrategy.RollingUpdate.AnnotateNodeToDetach
+
+	if v != nil {
+		return v.Key
+	}
+
+	return ""
 }
 
 func getDetachNodeAnnotationValue(ing ingressdaemonsetsv1alpha1.IngressDaemonSet) *string {
-	return ing.Spec.UpdateStrategy.RollingUpdate.AnnotateNodeToDetach.Value
+	v := ing.Spec.UpdateStrategy.RollingUpdate.AnnotateNodeToDetach
+	if v != nil {
+		return v.Value
+	}
+	return nil
 }
 
 func isUnavailable(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, node corev1.Node) (bool, error) {
@@ -457,7 +517,7 @@ func isUnavailable(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, node corev1.N
 	return true, nil
 }
 
-func newDeployment(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, nodeName string) appsv1.Deployment {
+func (r *IngressDaemonSetReconciler) newDeployment(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, nodeName string) appsv1.Deployment {
 	deploymentName := fmt.Sprintf("%s-%s", ing.Name, nodeName)
 
 	labels := map[string]string{
@@ -479,7 +539,7 @@ func newDeployment(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, nodeName stri
 	template.Labels = labels
 	template.Spec.NodeName = nodeName
 
-	return appsv1.Deployment{
+	deploy := appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deploymentName,
@@ -492,6 +552,7 @@ func newDeployment(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, nodeName stri
 					UID:        ing.UID,
 				},
 			},
+			Annotations: map[string]string{},
 		},
 		Spec: appsv1.DeploymentSpec{
 			Selector: metav1.SetAsLabelSelector(labels),
@@ -505,9 +566,17 @@ func newDeployment(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, nodeName stri
 			},
 		},
 	}
+
+	deploy.Annotations[ObjectHashAnnotationKey] = ComputeHash(deploy.Spec)
+
+	if err := ctrl.SetControllerReference(&ing, &deploy, r.Scheme); err != nil {
+		panic(err)
+	}
+
+	return deploy
 }
 
-func newDaemonSet(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, port int) appsv1.DaemonSet {
+func (r *IngressDaemonSetReconciler) newDaemonSet(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, port int) appsv1.DaemonSet {
 	name := fmt.Sprintf("%s-%d", ing.Name, port)
 
 	labels := map[string]string{
@@ -526,19 +595,24 @@ func newDaemonSet(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, port int) apps
 		serviceAccountName = "default"
 	}
 
-	return appsv1.DaemonSet{
+	image := ing.Spec.HealthChecker.Image
+	if image == "" {
+		image = "mumoshu/ingress-daemonset-node-healthcheck-server:latest"
+	}
+
+	ds := appsv1.DaemonSet{
 		TypeMeta: metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ing.Namespace,
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion: ing.APIVersion,
-					Kind:       ing.Kind,
-					Name:       ing.Name,
-					UID:        ing.UID,
-				},
-			},
+			//OwnerReferences: []metav1.OwnerReference{
+			//	{
+			//		APIVersion: ing.APIVersion,
+			//		Kind:       ing.Kind,
+			//		Name:       ing.Name,
+			//		UID:        ing.UID,
+			//	},
+			//},
 			Annotations: map[string]string{
 				HealthCheckNodePortAnnotation: fmt.Sprintf("%d", port),
 			},
@@ -553,15 +627,17 @@ func newDaemonSet(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, port int) apps
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "healthcheck-responder",
-							Image: "mumoshu/ingress-daemonset-controller",
+							Name:            "node-healthcheck-server",
+							Image:           image,
+							ImagePullPolicy: imagePullPolicy,
 							Command: []string{
-								"healthcheck-responder",
+								"/manager",
 							},
 							Args: []string{
-								"--port", fmt.Sprintf("%d", port),
+								"--healthcheck-addr", fmt.Sprintf(":%d", port),
 								"--namespace", ing.Namespace,
-								"--name", ing.Name,
+								"--deployment", ing.Name + "-$(NODE_NAME)",
+								"--ingress-daemonset", ing.Name,
 							},
 							Env: []corev1.EnvVar{
 								{
@@ -583,7 +659,6 @@ func newDaemonSet(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, port int) apps
 									corev1.ResourceMemory: *resource.NewMilliQuantity(100, resource.BinarySI),
 								},
 							},
-							ImagePullPolicy: imagePullPolicy,
 						},
 					},
 					RestartPolicy:      corev1.RestartPolicyAlways,
@@ -599,6 +674,14 @@ func newDaemonSet(ing ingressdaemonsetsv1alpha1.IngressDaemonSet, port int) apps
 			},
 		},
 	}
+
+	ds.Annotations[ObjectHashAnnotationKey] = ComputeHash(ds.Spec)
+
+	if err := ctrl.SetControllerReference(&ing, &ds, r.Scheme); err != nil {
+		panic(err)
+	}
+
+	return ds
 }
 
 func (r *IngressDaemonSetReconciler) reconcileDaemonSets(
@@ -626,14 +709,18 @@ func (r *IngressDaemonSetReconciler) reconcileDaemonSets(
 
 				return &ctrl.Result{RequeueAfter: defaultRequeueAfterOnError}, err
 			}
+
+			log.Info("Deleted daemonset", "daemonset", types.NamespacedName{Namespace: d.Namespace, Name: d.Name})
+
+			continue
 		}
 
-		ds := newDaemonSet(ing, port)
+		ds := r.newDaemonSet(ing, port)
 
-		oldHash := ComputeHash(d.Spec)
-		newHash := ComputeHash(ds.Spec)
+		oldHash := d.Annotations[ObjectHashAnnotationKey]
+		newHash := ds.Annotations[ObjectHashAnnotationKey]
 
-		if newHash != oldHash {
+		if oldHash != newHash {
 			newDS := d.DeepCopy()
 			newDS.Spec = ds.Spec
 
@@ -642,15 +729,13 @@ func (r *IngressDaemonSetReconciler) reconcileDaemonSets(
 
 				return &ctrl.Result{RequeueAfter: defaultRequeueAfterOnError}, err
 			}
-
-			return &ctrl.Result{Requeue: true}, nil
 		}
 
 		delete(desiredHealthCheckNodePorts, port)
 	}
 
 	for p := range desiredHealthCheckNodePorts {
-		ds := newDaemonSet(ing, p)
+		ds := r.newDaemonSet(ing, p)
 
 		if err := r.Create(ctx, &ds); err != nil {
 			log.Error(err, "Creating daemonest")
