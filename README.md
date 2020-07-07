@@ -2,9 +2,14 @@
 
 `ingress-daemonset-controller` is a Kubernetes controller dedicated to manage ingress controllers.
 
+This might be useful for anyone trying to build:
+
+- A cluster ingress and it needs to be super efficient
+- Your own LBaaS on top of Kubernetes and it needs to be super efficient
+
 It provides `IngressDaemonSet` CRD to deploy an ingress controller so that:
 
-1. You can run two or more pods per node for high availability of `externalTrafficPolicy: Local` OR REUSE_PORT-powered service.
+1. You can run two or more pods per node for high availability of `externalTrafficPolicy: Local` OR `SO_REUSE_PORT`-enabled services.
 2. Deploy a dedicated "health-checker" daemonset for more reliable deployment
 
 ## Adding replicas to DaemonSet for high-availability
