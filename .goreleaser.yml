@@ -1,0 +1,31 @@
+project_name: ingress-daemonset-controller
+builds:
+  - id: ingress-daemonset-controller
+    main: ./
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/mumoshu/ingress-daemonset-controller/Version={{.Version}}
+changelog:
+  filters:
+    # commit messages matching the regexp listed here will be removed from
+    # the changelog
+    # Default is empty
+    exclude:
+      - '^docs:'
+      - typo
+dockers:
+  - goos: linux
+    goarch: amd64
+    goarm: ''
+    binaries:
+      - ingress-daemonset-controller
+    builds:
+      - ingress-daemonset-controller
+    image_templates:
+      - "mumoshu/ingress-daemonset-controller:latest"
+      - "mumoshu/ingress-daemonset-controller:{{ .Tag }}"
+      - "mumoshu/ingress-daemonset-controller:v{{ .Major }}"
+    build_flag_templates:
+      - "--pull"
+    dockerfile: Dockerfile.release

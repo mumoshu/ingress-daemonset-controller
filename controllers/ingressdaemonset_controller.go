@@ -524,16 +524,6 @@ func (r *IngressDaemonSetReconciler) newDeployment(ing ingressdaemonsetsv1alpha1
 		"ingress-daemonset-node": deploymentName,
 	}
 
-	imagePullPolicy := ing.Spec.HealthChecker.ImagePullPolicy
-	if imagePullPolicy == "" {
-		imagePullPolicy = corev1.PullAlways
-	}
-
-	serviceAccountName := ing.Spec.HealthChecker.ServiceAccountName
-	if serviceAccountName == "" {
-		serviceAccountName = "default"
-	}
-
 	template := ing.Spec.Template.DeepCopy()
 	template.GenerateName = deploymentName
 	template.Labels = labels
