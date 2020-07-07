@@ -4,7 +4,7 @@
 
 It provides `IngressDaemonSet` CRD to deploy an ingress controller so that:
 
-1. You can run two or more pods per node for high availability
+1. You can run two or more pods per node for high availability of `externalTrafficPolicy: Local` OR REUSE_PORT-powered service.
 2. Deploy a dedicated "health-checker" daemonset for more reliable deployment
 
 ## Adding replicas to DaemonSet for high-availability
