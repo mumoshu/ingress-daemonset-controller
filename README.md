@@ -7,10 +7,38 @@ This might be useful for anyone trying to build:
 - A cluster ingress and it needs to be super efficient
 - Your own LBaaS on top of Kubernetes and it needs to be super efficient
 
-It provides `IngressDaemonSet` CRD to deploy an ingress controller so that:
+It provides `IngressDaemonSet` CRD to deploy a set of server application pods so that you can:
 
-1. You can run two or more pods per node for high availability of `externalTrafficPolicy: Local` OR `SO_REUSE_PORT`-enabled services.
-2. Deploy a dedicated "health-checker" daemonset for more reliable deployment
+1. Run two or more pods per node for high availability of `externalTrafficPolicy: Local` OR `SO_REUSE_PORT`-enabled services.
+2. Detach the node from the external lb before updating pods on a node
+3. Deploy a dedicated "health-checker" daemonset for more reliable deployment
+
+> Note that the second bullet point becomes unnecessary once https://github.com/kubernetes/kubernetes/issues/85643 is implemented in the upstream.
+
+## Integrations
+
+You'll usually use this to build a highly available and efficient cluster of a reverse proxy or an API gateway like:
+
+- Envoy
+- Nginx
+- HAProxy
+- Caddy
+- Skipper
+- Kong
+- Ambassador
+- Istio Ingress Gateway
+
+`ingress-daemonset-controller` isn't a wrapper around any of them, but provides a solid foundation to run it on Kubernetes.
+
+## Pre-requisites
+
+`ingress-daemonset-controller` doesn't manage DNS or VIP for you.
+
+That being said, according to your setup and requirements, you need to prepare any of the followings:
+
+- On a bare-metal env, something like MetalLB needs to be set up to provide VIP to forward traffic to real servers, i.e. K8s nodes running your server apps
+- On AWS, Route 53 hosted zone and record sets, and/or CloudFront distributions, and/or ELB to front the real servers
+  - For ELB, you'll usually prefer NLB over ALB assuming e.g. L7 routing are handled by your server apps
 
 ## Adding replicas to DaemonSet for high-availability
 
